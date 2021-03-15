@@ -44,75 +44,75 @@ def get_response(base_url, version, token, method, params):
                   response.json()['error']['error_msg'])
             time.sleep(5)
 
+while True:
+    # получае список id групп
+    groups = get_response(base_url, version, token, "groups.get", "user_id={}&filter=admin".format(id))["items"]
+    # получае список id членов группы
+    members = []
+    for g_id in groups:
+        members.append(["groiup_id:{}".format(g_id)] +
+                       get_response(base_url, version, token, "groups.getMembers", "group_id={}".format(g_id))['items'])
 
-# получае список id групп
-groups = get_response(base_url, version, token, "groups.get", "user_id={}&filter=admin".format(id))["items"]
-# получае список id членов группы
-members = []
-for g_id in groups:
+    # получаем данные о группах
+    groups_info = get_response(base_url, version, token, "groups.getById",
+                               "group_ids={}".format(','.join([str(strs) for strs in groups])))
+    # удаляем лишние данные
+    for g in groups_info:
+        del g['photo_50']
+        del g['photo_100']
 
-    members.append(["groiup_id:{}".format(g_id)]+get_response(base_url, version, token, "groups.getMembers", "group_id={}".format(g_id))['items'])
+    # приводим свединя о групах и их id в удобный вид
+    groups_list = {}
+    for items in groups_info:
+        groups_list[items["id"]] = items["name"]
 
-# получаем данные о группах
-groups_info = get_response(base_url, version, token, "groups.getById",
-                           "group_ids={}".format(','.join([str(strs) for strs in groups])))
-#удаляем лишние данные
-for g in groups_info:
-    del g['photo_50']
-    del g['photo_100']
+    # получаем статистику групп,организовывая полученные даные в словарь,с Id группы в качестве ключа и статистикой в качестве значения
+    """
+    groups_stats = []
+    for g_id in groups:
+        groups_stats.append(get_response(base_url, version, token, "stats.get",
+                                         "group_id={}&extended=1&stats_groups= visitors, reach, activity&timestamp_from={}&timestamp_to={}".format(
+                                             g_id, int(time.time()) - 7200, int(time.time())))[0])
+    print(groups_stats)
+    #приводим информацию о статистике в удобный вид
+    for g in groups_stats:
+        g['reach'] = g['reach']['reach_subscribers']
+        g['visitors'] = g['visitors']['visitors']
 
+    print(groups_stats)
+    """
+    # получаем данные о постах сообщества
+    groups_posts = []
+    for group_id in groups:
+        groups_posts += get_response(base_url, version, token, "wall.get",
+                                     "owner_id=-{}&count=20&extended=1&fields= id, name".format(group_id))['items']
+    # приводим данные о постах в удобоваримыый вид
+    list_of_properties = ['from_id', 'date', 'post_type', 'text']
+    new_posts_list = []
+    for post in groups_posts:
+        post_dict = {}
+        for properties in list_of_properties:
+            post_dict[properties] = post[properties]
+        post_dict['comments'] = post['comments']['count']
+        post_dict['reposts'] = post['reposts']['count']
+        post_dict['likes'] = post['likes']['count']
+        if 'copy_history' in post.keys():
+            post_dict['id'] = post['copy_history'][0]['id']
+            post_dict['photo'] = post['copy_history'][0]['attachments'][0]['photo']['sizes'][4]['url']
+        else:
+            post_dict['id'] = post['id']
+            post_dict['photo'] = post['attachments'][0]['photo']['sizes'][4]['url']
 
-# приводим свединя о групах и их id в удобный вид
-groups_list = {}
-for items in groups_info:
-    groups_list[items["id"]] = items["name"]
+        new_posts_list.append(post_dict)
 
-# получаем статистику групп,организовывая полученные даные в словарь,с Id группы в качестве ключа и статистикой в качестве значения
-"""
-groups_stats = []
-for g_id in groups:
-    groups_stats.append(get_response(base_url, version, token, "stats.get",
-                                     "group_id={}&extended=1&stats_groups= visitors, reach, activity&timestamp_from={}&timestamp_to={}".format(
-                                         g_id, int(time.time()) - 7200, int(time.time())))[0])
-print(groups_stats)
-#приводим информацию о статистике в удобный вид
-for g in groups_stats:
-    g['reach'] = g['reach']['reach_subscribers']
-    g['visitors'] = g['visitors']['visitors']
+    engine = create_engine("postgresql+psycopg2://postgres:{}@localhost/vk_db".format(reader("postpas.txt")))
+    # сгружаем таблицу с группами в psql
+    pd.DataFrame(groups_info).to_sql('groups_info_table', con=engine, if_exists='replace')
+    # сгружаем таблицу с информацией о постах в psql
+    pd.DataFrame(new_posts_list).to_sql('posts_table', con=engine, if_exists='append')
+    # сгружаем таблицу с id подписчиков групп
+    pd.DataFrame(members).to_sql('members_table', con=engine, if_exists='replace')
+    time.sleep(7200)
 
-print(groups_stats)
-"""
-# получаем данные о постах сообщества
-groups_posts = []
-for group_id in groups:
-    groups_posts += get_response(base_url, version, token, "wall.get",
-                                 "owner_id=-{}&count=20&extended=1&fields= id, name".format(group_id))['items']
-# приводим данные о постах в удобоваримыый вид
-list_of_properties = ['from_id', 'date', 'post_type', 'text']
-new_posts_list = []
-for post in groups_posts:
-    post_dict = {}
-    for properties in list_of_properties:
-        post_dict[properties] = post[properties]
-    post_dict['comments'] = post['comments']['count']
-    post_dict['reposts'] = post['reposts']['count']
-    post_dict['likes'] = post['likes']['count']
-    if 'copy_history' in post.keys():
-        post_dict['id'] = post['copy_history'][0]['id']
-        post_dict['photo'] = post['copy_history'][0]['attachments'][0]['photo']['sizes'][4]['url']
-    else:
-        post_dict['id'] = post['id']
-        post_dict['photo'] = post['attachments'][0]['photo']['sizes'][4]['url']
-
-    new_posts_list.append(post_dict)
-
-
-engine = create_engine("postgresql+psycopg2://postgres:{}@localhost/vk_db".format(reader("postpas.txt")))
-# сгружаем таблицу с группами в psql
-pd.DataFrame(groups_info).to_sql('groups_info_table', con=engine, if_exists='replace')
-# сгружаем таблицу с информацией о постах в psql
-pd.DataFrame(new_posts_list).to_sql('posts_table', con=engine, if_exists='append')
-#сгружаем таблицу с id подписчиков групп
-pd.DataFrame(members).to_sql('members_table', con=engine, if_exists='replace')
 
 
