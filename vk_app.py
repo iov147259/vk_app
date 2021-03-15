@@ -44,27 +44,35 @@ def get_response(base_url, version, token, method, params):
                   response.json()['error']['error_msg'])
             time.sleep(5)
 
+
 while True:
     # получае список id групп
     groups = get_response(base_url, version, token, "groups.get", "user_id={}&filter=admin".format(id))["items"]
     # получае список id членов группы
     members = []
     for g_id in groups:
-        members.append(["groiup_id:{}".format(g_id)] +
-                       get_response(base_url, version, token, "groups.getMembers", "group_id={}".format(g_id))['items'])
+        list_of_members = get_response(base_url, version, token, "groups.getMembers", "group_id={}".format(g_id))[
+            'items']
+        for mem in list_of_members:
+            members.append([mem, g_id])
 
     # получаем данные о группах
     groups_info = get_response(base_url, version, token, "groups.getById",
                                "group_ids={}".format(','.join([str(strs) for strs in groups])))
     # удаляем лишние данные
+    groups_info_list = []
     for g in groups_info:
         del g['photo_50']
         del g['photo_100']
+        del g['screen_name']
+        del g['is_admin']
+        del g['admin_level']
+        del g['is_member']
+        groups_info_list.append(list(g.values()))
 
     # приводим свединя о групах и их id в удобный вид
-    groups_list = {}
-    for items in groups_info:
-        groups_list[items["id"]] = items["name"]
+
+
 
     # получаем статистику групп,организовывая полученные даные в словарь,с Id группы в качестве ключа и статистикой в качестве значения
     """
@@ -107,12 +115,12 @@ while True:
 
     engine = create_engine("postgresql+psycopg2://postgres:{}@localhost/vk_db".format(reader("postpas.txt")))
     # сгружаем таблицу с группами в psql
-    pd.DataFrame(groups_info).to_sql('groups_info_table', con=engine, if_exists='replace')
+    pd.DataFrame(groups_info_list,
+                 columns=["group_id", "group_name", "is_closed", "group_type", "is_advertiser", "group_photo"]).to_sql(
+        'groups_info_table', con=engine, if_exists='replace', index=False)
     # сгружаем таблицу с информацией о постах в psql
-    pd.DataFrame(new_posts_list).to_sql('posts_table', con=engine, if_exists='append')
+    pd.DataFrame(new_posts_list).to_sql('posts_table', con=engine, if_exists='append', index=False)
     # сгружаем таблицу с id подписчиков групп
-    pd.DataFrame(members).to_sql('members_table', con=engine, if_exists='replace')
+    pd.DataFrame(members, columns=["subscribers_id", "group_id"]).to_sql('members_table', con=engine,
+                                                                         if_exists='replace', index=False)
     time.sleep(7200)
-
-
-
