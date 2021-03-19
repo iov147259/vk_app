@@ -1,8 +1,9 @@
 import requests
 import time
 import pandas as pd
-import datetime
+
 from sqlalchemy import create_engine
+import psycopg2
 
 scope = 0
 time_bank = 0
@@ -68,7 +69,9 @@ def get_response(base_url, version, token, method, params):
             time.sleep(5)
 
 
+last_date = []
 while True:
+
     # получае список id групп
     groups = get_response(base_url, version, token, "groups.get", "user_id={}&filter=admin".format(id))["items"]
     # получае список c id и количеством подписчиков группы
@@ -118,15 +121,67 @@ while True:
             members_arr[1] = 0
             for stats in groups_stats:
                 if stats[0] == members_arr[0]:
-                    stats.append(members_arr[1]+int(stats[3]) - int(stats[4]))
+                    stats.append(members_arr[1] + int(stats[3]) - int(stats[4]))
                     members_arr[1] = members_arr[1] + int(stats[3]) - int(stats[4])
         stats_column_names = ["group_id", "date", "likes", "subscribed", " unsubscribed", "comments", "reposts",
                               "count of subscribers"]
+
+        last_date.append(groups_stats[-1][1])
         engine = create_engine("postgresql+psycopg2://postgres:{}@localhost/vk_db".format(reader("postpas.txt")))
         print("processing...")
         pd.DataFrame(groups_stats, columns=stats_column_names).to_sql('stats_table', con=engine,
                                                                       if_exists='replace', index=False)
         print("done!")
+        # обновляем инфу раз в 2 часа, дополняя таблицу
+    else:
+        groups_stats = []
+        groups_stats_list = []
+        for g_id in groups:
+            groups_stats_list.append([g_id, get_response(base_url, version, token, "stats.get",
+                                                         "group_id={}&extended=1&interval = day&stats_groups= visitors, reach, activity&timestamp_from={}&timestamp_to={}".format(
+                                                             g_id, int(time.time()) - 7200, int(time.time())))])
+
+        for period_num in reversed(range(len(groups_stats_list[0][1]))):
+            for group_list in groups_stats_list:
+
+                if 'activity' in group_list[1][period_num].keys():
+                    groups_stats.append(
+                        [group_list[0], to_date(group_list[1][period_num]["period_from"])] + to_arr_of_active(list(
+                            group_list[1][period_num]['activity'].items())))
+                else:
+
+                    groups_stats.append(
+                        [group_list[0], to_date(group_list[1][period_num]["period_from"]), 0, 0, 0, 0, 0])
+        for members_arr in members:
+            members_arr[1] = int(members_arr[1])-1
+            for stats in groups_stats:
+                if stats[0] == members_arr[0]:
+                    stats.append(members_arr[1] + int(stats[3]) - int(stats[4]))
+                    members_arr[1] = members_arr[1] + int(stats[3]) - int(stats[4])
+        stats_column_names = ["group_id", "date", "likes", "subscribed", " unsubscribed", "comments", "reposts",
+                              "count of subscribers"]
+        # проверяем, если пришёл ответ, в котором дата статистики, такая же как у последней записи, если так, то удаляем записи с такой же датой и добавляем принятые данные
+
+        if groups_stats[0][1] == last_date[0]:
+            print("update")
+            con = psycopg2.connect(database="vk_db", user='postgres', password=reader("postpas.txt"), host="localhost",
+                                   port=5432)
+            cur = con.cursor()
+            cur.execute("DELETE FROM stats_table WHERE date= %s", (last_date[0],))
+            con.commit()
+            con.close
+            engine = create_engine("postgresql+psycopg2://postgres:{}@localhost/vk_db".format(reader("postpas.txt")))
+
+            pd.DataFrame(groups_stats, columns=stats_column_names).to_sql('stats_table', con=engine,
+                                                                          if_exists='append', index=False)
+            print("done!")
+            # если принятые данные содержат дату, которой еще не было, принятые данные просто вносятся в таблицу и меняется значение переменной last_date, хранящей дату самой свежей записи
+        else:
+            print("supplement")
+            pd.DataFrame(groups_stats, columns=stats_column_names).to_sql('stats_table', con=engine,
+                                                                          if_exists='append', index=False)
+            last_date[0] = groups_stats[0][1]
+            print("done!")
 
     # получаем данные о постах сообщества
     groups_posts = []
@@ -164,9 +219,8 @@ while True:
         'groups_info_table', con=engine, if_exists='replace', index=False)
     # сгружаем таблицу с информацией о постах в psql
     pd.DataFrame(new_posts_list).to_sql('posts_table', con=engine, if_exists='replace', index=False)
-    # сгружаем таблицу с id подписчиков групп
-    pd.DataFrame(members, columns=["subscribers_id", "group_id"]).to_sql('members_table', con=engine,
-                                                                         if_exists='replace', index=False)
-    print("done!")
 
-    time.sleep(7200)
+    print("done!")
+    print("slipping now...")
+    time.sleep(30)
+    print("waking up...")
