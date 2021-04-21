@@ -293,6 +293,7 @@ else:
         'groups_posts_stats', con=engine, if_exists='append', index=False)
     last_date[0] = posts_stats[0][-1]
     print("update!")
+
 # обрабатываем истории
 stories_list = []
 for g in groups:
@@ -311,8 +312,29 @@ for g in groups:
                     {"stories_id": st['id'], "group_id": st['owner_id'], "date_of_publication": to_date(st["date"]),
                      "image/photo": st["video"]['image'][-1]['url']})
 
-pd.DataFrame(stories_list).to_sql(
-    'stories_table', con=engine, if_exists='replace', index=False, )
+cur = con.cursor()
+try:
+    cur.execute("SELECT * FROM stories_table")
+    f = cur.fetchall()
+except Exception:
+    f = False
+
+if not f:
+    print(stories_list)
+    pd.DataFrame(stories_list).to_sql(
+        'stories_table', con=engine, if_exists='replace', index=False, )
+else:
+
+    ids_list = [[stor[0], stor[1]] for stor in f]
+    stories_list_filtered = []
+    for story in stories_list:
+
+        if [story["stories_id"], story['group_id']] not in ids_list:
+            stories_list_filtered.append(story)
+
+    pd.DataFrame(stories_list_filtered).to_sql(
+        'stories_table', con=engine, if_exists='append', index=False, )
+
 # обрабатываем статистику историй
 story_stats = []
 for stories in stories_list:
@@ -323,15 +345,22 @@ for stories in stories_list:
                         'answer by story': stat['replies']['count'], 'shares': stat["shares"]['count'],
                         'subscribed': stat['subscribers']['count'], 'views': stat['views']["count"],
                         'likes': stat["likes"]['count'], "timestamp": " ".join(time.ctime().split(" ")[1:4])})
-cur = con.cursor()
 try:
     cur.execute("SELECT * FROM story_stats")
-    f = cur.fetchone()
+    f = cur.fetchall()
+    con.close()
 except Exception:
     f = False
-if f:
+if not f:
     pd.DataFrame(story_stats).to_sql(
         'story_stats', con=engine, if_exists='append', index=False, )
 else:
+    stats_story = [[s['story id'], s['group id']] for s in story_stats]
+    for story in f:
+        if [story[0], story[1]] not in stats_story:
+            story_stats.append({"story id": story[0], "group id": story[1],
+                        'answer by story': story[2], 'shares': story[3],
+                        'subscribed': story[4], 'views': story[5],
+                        'likes': story[6], "timestamp": " ".join(time.ctime().split(" ")[1:4])})
     pd.DataFrame(story_stats).to_sql(
-        'story_stats', con=engine, if_exists='append', index=False, )
+        'story_stats', con=engine, if_exists='replace', index=False)
