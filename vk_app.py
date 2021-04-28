@@ -231,14 +231,17 @@ for post in groups_posts:
     post_dict['likes'] = post['likes']['count']
     if 'copy_history' in post.keys():
         for item in post['copy_history'][0]['attachments']:
-            posts_photos.append([post_dict["group_id"], post_dict['post id'], item['photo']['sizes'][4]['url']])
+            if "photo" in item.keys():
+                posts_photos.append([post_dict["group_id"], post_dict['post id'], item['photo']['sizes'][4]['url']])
+
 
 
 
     elif 'attachments' in post.keys():
         arr = []
         for item in post['attachments']:
-            posts_photos.append([post_dict["group_id"], post_dict['post id'], item['photo']['sizes'][4]['url']])
+            if "photo" in item.keys():
+                posts_photos.append([post_dict["group_id"], post_dict['post id'], item['photo']['sizes'][4]['url']])
 
     new_posts_list.append(post_dict)
 print("loading in plsq...")
@@ -254,7 +257,6 @@ pd.DataFrame(groups_info_list,
 pd.DataFrame(new_posts_list).to_sql('posts_table', con=engine, if_exists='replace', index=False)
 
 print("done!")
-print("slipping now...")
 
 # здесь получаем и обрабатываем  статистику по постам
 
@@ -264,20 +266,33 @@ for post in new_posts_list:
         post_stat = get_response(base_url, version, token, "stats.getPostReach",
                                  "owner_id={}&post_ids={}".format(post['group_id'], post['post id']))['response']
 
-        del post_stat['join_group']
-        del post_stat['report']
-        del post_stat['hide']
-        posts_stats.append(post_stat.values().append(to_date(time.time())))
+
+        posts_stats.append([post_stat[0]['post_id'], post_stat[0]['reach_subscribers'],
+                           post_stat[0]['reach_total'], post_stat[0]['reach_viral'], post_stat[0]['reach_ads'],
+                           post_stat[0]['to_group'],  post_stat[0]['unsubscribe'], to_date(time.time())])
+
     except Exception:
+
         continue
 
-post_columns_names = ["reach", "total_reach", "add_reach", "viral_reach", "links",
-                      "subscribe", "unsubscribe ", "stats_date"]
-if flag == 0:
+post_columns_names = ["post_id", "reach_subscribers", "reach_total", "viral_reach", "reach_ads",
+                      "mowing to group", "unsubscribe ", "stats_date"]
+
+print(posts_stats)
+try:
+    cur.execute("SELECT * FROM groups_posts_stats")
+    last_date = cur.fetchall()[-1][-1]
+except Exception:
+    last_date = None
+
+if last_date is None:
+    print('creating...')
     pd.DataFrame(posts_stats,
                  columns=post_columns_names).to_sql(
-        'groups_posts_stats', con=engine, if_exists='replace', index=False)
-elif posts_stats[0][-1] != last_date[0]:
+        'groups_posts_stats', con=engine, if_exists='append', index=False)
+
+
+elif posts_stats[-1][-1] != last_date:
     print("adding...")
     pd.DataFrame(posts_stats,
                  columns=post_columns_names).to_sql(
@@ -286,12 +301,12 @@ else:
     print("updating...")
     with con as con:
         cur = con.cursor()
-        cur.execute("DELETE FROM groups_posts_stats WHERE stats_date = %s", (last_date[0],))
+        cur.execute("DELETE FROM groups_posts_stats WHERE stats_date = %s", (last_date,))
         con.commit()
     pd.DataFrame(posts_stats,
                  columns=post_columns_names).to_sql(
         'groups_posts_stats', con=engine, if_exists='append', index=False)
-    last_date[0] = posts_stats[0][-1]
+
     print("update!")
 
 # обрабатываем истории
@@ -319,10 +334,11 @@ try:
 except Exception:
     f = False
 
-if not f:
-    print(stories_list)
+if not f and (f != []):
+    print(f)
     pd.DataFrame(stories_list).to_sql(
-        'stories_table', con=engine, if_exists='replace', index=False, )
+        'stories_table', con=engine, if_exists='replace', index=False)
+
 else:
 
     ids_list = [[stor[0], stor[1]] for stor in f]
@@ -359,8 +375,9 @@ else:
     for story in f:
         if [story[0], story[1]] not in stats_story:
             story_stats.append({"story id": story[0], "group id": story[1],
-                        'answer by story': story[2], 'shares': story[3],
-                        'subscribed': story[4], 'views': story[5],
-                        'likes': story[6], "timestamp": " ".join(time.ctime().split(" ")[1:4])})
+                                'answer by story': story[2], 'shares': story[3],
+                                'subscribed': story[4], 'views': story[5],
+                                'likes': story[6], "timestamp": " ".join(time.ctime().split(" ")[1:4])})
     pd.DataFrame(story_stats).to_sql(
         'story_stats', con=engine, if_exists='replace', index=False)
+print("slipping now...")
