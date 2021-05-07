@@ -1,6 +1,7 @@
 import requests
 import time
 import pandas as pd
+import datetime
 
 from sqlalchemy import create_engine
 import psycopg2
@@ -8,6 +9,7 @@ import psycopg2
 scope = 0
 time_bank = 0
 flag = 0
+statrt_date_for_stats = datetime.datetime(2020, 1, 1).timestamp()
 
 
 def to_date(unix_time):
@@ -23,8 +25,8 @@ def reader(name):
 engine = create_engine("postgresql+psycopg2://postgres:{}@localhost/vk_db".format(reader("postpas.txt")))
 con = psycopg2.connect(database="vk_db", user='postgres', password=reader("postpas.txt"), host="localhost",
                        port=5432)
-token = reader("t.txt")
-id = reader("id.txt")
+token = reader("t2.txt")
+
 base_url = "https://api.vk.com/method/{}?{}&access_token={}&v={}"
 version = "5.130"
 
@@ -84,9 +86,9 @@ def get_response(base_url, version, token, method, params):
 
 
 print("waking up...")
-#получаем id пользователя,которому пренадлежит токен
-info=get_response(base_url, version, token,"account.getProfileInfo",'')['response']
-id=info['id']
+# получаем id пользователя,которому пренадлежит токен
+info = get_response(base_url, version, token, "account.getProfileInfo", '')['response']
+id = info['id']
 print(id)
 # получаем список групп
 groups = get_response(base_url, version, token, "groups.get", "user_id={}&filter=admin".format(id))['response']["items"]
@@ -129,7 +131,7 @@ if not bool(f):
     for g_id in groups:
         groups_stats_list.append([g_id, get_response(base_url, version, token, "stats.get",
                                                      "group_id={}&extended=1&interval = day&stats_groups= visitors, reach, activity&timestamp_from={}&timestamp_to={}".format(
-                                                         g_id, int(time.time()) - 1900800, int(time.time())))[
+                                                         g_id, statrt_date_for_stats, int(time.time())))[
             'response']])
 
     for period_num in range(len(groups_stats_list[0][1])):
@@ -140,10 +142,7 @@ if not bool(f):
                 groups_stats.append(
                     [group_list[0], to_date(group_list[1][period_num]["period_from"])] + to_arr_of_active(list(
                         group_list[1][period_num]['activity'].items())))
-            else:
 
-                groups_stats.append(
-                    [group_list[0], to_date(group_list[1][period_num]["period_from"]), 0, 0, 0, 0, 0])
     for members_arr in members:
 
         for stats in groups_stats:
@@ -270,10 +269,9 @@ for post in new_posts_list:
         post_stat = get_response(base_url, version, token, "stats.getPostReach",
                                  "owner_id={}&post_ids={}".format(post['group_id'], post['post id']))['response']
 
-
         posts_stats.append([post_stat[0]['post_id'], post_stat[0]['reach_subscribers'],
-                           post_stat[0]['reach_total'], post_stat[0]['reach_viral'], post_stat[0]['reach_ads'],
-                           post_stat[0]['to_group'],  post_stat[0]['unsubscribe'], to_date(time.time())])
+                            post_stat[0]['reach_total'], post_stat[0]['reach_viral'], post_stat[0]['reach_ads'],
+                            post_stat[0]['to_group'], post_stat[0]['unsubscribe'], to_date(time.time())])
 
     except Exception:
 
@@ -288,30 +286,29 @@ try:
     last_date = cur.fetchall()[-1][-1]
 except Exception:
     last_date = None
+if posts_stats != []:
+    if last_date is None:
+        print('creating...')
+        pd.DataFrame(posts_stats,
+                     columns=post_columns_names).to_sql(
+            'groups_posts_stats', con=engine, if_exists='append', index=False)
 
-if last_date is None:
-    print('creating...')
-    pd.DataFrame(posts_stats,
-                 columns=post_columns_names).to_sql(
-        'groups_posts_stats', con=engine, if_exists='append', index=False)
 
+    elif posts_stats[-1][-1] != last_date:
+        print("adding...")
+        pd.DataFrame(posts_stats,
+                     columns=post_columns_names).to_sql(
+            'groups_posts_stats', con=engine, if_exists='append', index=False)
+    else:
+        print("updating...")
+        with con as con:
+            cur = con.cursor()
+            cur.execute("DELETE FROM groups_posts_stats WHERE stats_date = %s", (last_date,))
+            con.commit()
+        pd.DataFrame(posts_stats,
+                     columns=post_columns_names).to_sql(
+            'groups_posts_stats', con=engine, if_exists='append', index=False)
 
-elif posts_stats[-1][-1] != last_date:
-    print("adding...")
-    pd.DataFrame(posts_stats,
-                 columns=post_columns_names).to_sql(
-        'groups_posts_stats', con=engine, if_exists='append', index=False)
-else:
-    print("updating...")
-    with con as con:
-        cur = con.cursor()
-        cur.execute("DELETE FROM groups_posts_stats WHERE stats_date = %s", (last_date,))
-        con.commit()
-    pd.DataFrame(posts_stats,
-                 columns=post_columns_names).to_sql(
-        'groups_posts_stats', con=engine, if_exists='append', index=False)
-
-    print("update!")
-
+        print("update!")
 
 print("slipping now...")

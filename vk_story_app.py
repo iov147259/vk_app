@@ -27,20 +27,7 @@ token = reader("t2.txt")
 
 base_url = "https://api.vk.com/method/{}?{}&access_token={}&v={}"
 version = "5.130"
-def to_arr_of_active(arr_active_tuples):
-    result = [0, 0, 0, 0, 0]
-    for act in arr_active_tuples:
-        if act[0] == "likes":
-            result[0] = act[1]
-        if act[0] == "subscribed":
-            result[1] = act[1]
-        if act[0] == "unsubscribed":
-            result[2] = act[1]
-        if act[0] == "comments":
-            result[3] = act[1]
-        if act[0] == "copies":
-            result[4] = act[1]
-    return result
+
 
 
 def get_response(base_url, version, token, method, params):
@@ -85,7 +72,7 @@ print("waking up...")
 #получаем id пользователя,которому пренадлежит токен
 info=get_response(base_url, version, token,"account.getProfileInfo",'')['response']
 id=info['id']
-print(id)
+
 
 # получаем список групп
 groups = get_response(base_url, version, token, "groups.get", "user_id={}&filter=admin".format(id))['response']["items"]
@@ -109,6 +96,7 @@ for g in groups:
                      "image/photo": st["video"]['image'][-1]['url']})
 
 cur = con.cursor()
+columns=['stories_id','group_id',"date_of_publication","image/photo"]
 try:
     cur.execute("SELECT * FROM stories_table")
     f = cur.fetchall()
@@ -116,24 +104,25 @@ except Exception:
     f = False
 
 if not f and (f != []):
-    print(f)
-    pd.DataFrame(stories_list).to_sql(
+
+    pd.DataFrame(stories_list, columns=columns).to_sql(
         'stories_table', con=engine, if_exists='replace', index=False)
 
 else:
 
     ids_list = [[stor[0], stor[1]] for stor in f]
+
     stories_list_filtered = []
     for story in stories_list:
-
         if [story["stories_id"], story['group_id']] not in ids_list:
             stories_list_filtered.append(story)
 
-    pd.DataFrame(stories_list_filtered).to_sql(
+    pd.DataFrame(stories_list_filtered, columns=columns).to_sql(
         'stories_table', con=engine, if_exists='append', index=False, )
 
 # обрабатываем статистику историй
 story_stats = []
+columns_stats=["story id", "group id",'answer by story','shares','subscribed','views','likes',"timestamp"]
 for stories in stories_list:
     stat = get_response(base_url, version, token, "stories.getStats",
                         "owner_id={}&story_id={}".format(stories['group_id'], stories['stories_id']))['response']
@@ -145,20 +134,26 @@ for stories in stories_list:
 try:
     cur.execute("SELECT * FROM story_stats")
     f = cur.fetchall()
-    con.close()
+
 except Exception:
     f = False
 if not f:
-    pd.DataFrame(story_stats).to_sql(
+    pd.DataFrame(story_stats, columns=columns_stats).to_sql(
         'story_stats', con=engine, if_exists='append', index=False, )
 else:
     stats_story = [[s['story id'], s['group id']] for s in story_stats]
     for story in f:
         if [story[0], story[1]] not in stats_story:
+            print(1)
             story_stats.append({"story id": story[0], "group id": story[1],
                                 'answer by story': story[2], 'shares': story[3],
                                 'subscribed': story[4], 'views': story[5],
                                 'likes': story[6], "timestamp": " ".join(time.ctime().split(" ")[1:4])})
-    pd.DataFrame(story_stats).to_sql(
+
+    cur.execute("DROP TABLE story_stats")
+    con.commit()
+    print(story_stats)
+    pd.DataFrame(story_stats, columns=columns_stats).to_sql(
         'story_stats', con=engine, if_exists='replace', index=False)
 print("slipping now...")
+con.close()
