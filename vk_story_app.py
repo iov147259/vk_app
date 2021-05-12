@@ -1,6 +1,7 @@
 import requests
 import time
 import pandas as pd
+import datetime
 
 from sqlalchemy import create_engine
 import psycopg2
@@ -130,7 +131,7 @@ for stories in stories_list:
     story_stats.append({"story id": stories['stories_id'], "group id": stories['group_id'],
                         'answer by story': stat['replies']['count'], 'shares': stat["shares"]['count'],
                         'subscribed': stat['subscribers']['count'], 'views': stat['views']["count"],
-                        'likes': stat["likes"]['count'], "timestamp": " ".join(time.ctime().split(" ")[1:4])})
+                        'likes': stat["likes"]['count'], "timestamp": datetime.datetime.fromtimestamp(time.time())})
 try:
     cur.execute("SELECT * FROM story_stats")
     f = cur.fetchall()
@@ -148,7 +149,7 @@ else:
             story_stats.append({"story id": story[0], "group id": story[1],
                                 'answer by story': story[2], 'shares': story[3],
                                 'subscribed': story[4], 'views': story[5],
-                                'likes': story[6], "timestamp": " ".join(time.ctime().split(" ")[1:4])})
+                                'likes': story[6], "timestamp": datetime.datetime.fromtimestamp(time.time())})
 
     cur.execute("DROP TABLE story_stats")
     con.commit()

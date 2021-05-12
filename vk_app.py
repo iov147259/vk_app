@@ -1,3 +1,4 @@
+import numpy
 import requests
 import time
 import pandas as pd
@@ -25,7 +26,7 @@ def reader(name):
 engine = create_engine("postgresql+psycopg2://postgres:{}@localhost/vk_db".format(reader("postpas.txt")))
 con = psycopg2.connect(database="vk_db", user='postgres', password=reader("postpas.txt"), host="localhost",
                        port=5432)
-token = reader("t2.txt")
+token = reader("t.txt")
 
 base_url = "https://api.vk.com/method/{}?{}&access_token={}&v={}"
 version = "5.130"
@@ -49,7 +50,7 @@ def to_arr_of_active(arr_active_tuples):
 
 def get_response(base_url, version, token, method, params):
     url = base_url.format(method, params, token, version)
-
+    time.sleep(1)
     while True:
         # блок проврки, не было ли более 3-х запросов в секунду
         global scope, time_bank
@@ -75,6 +76,7 @@ def get_response(base_url, version, token, method, params):
 
 
 
+
         except Exception:
             if response.json()['error']['error_code'] == 15:
                 print("доступ запрещён")
@@ -89,7 +91,7 @@ print("waking up...")
 # получаем id пользователя,которому пренадлежит токен
 info = get_response(base_url, version, token, "account.getProfileInfo", '')['response']
 id = info['id']
-print(id)
+
 # получаем список групп
 groups = get_response(base_url, version, token, "groups.get", "user_id={}&filter=admin".format(id))['response']["items"]
 # получае список c id и количеством подписчиков группы
@@ -140,7 +142,8 @@ if not bool(f):
 
             if 'activity' in group_list[1][period_num].keys():
                 groups_stats.append(
-                    [group_list[0], to_date(group_list[1][period_num]["period_from"])] + to_arr_of_active(list(
+                    [group_list[0],
+                     datetime.datetime.fromtimestamp(group_list[1][period_num]["period_from"])] + to_arr_of_active(list(
                         group_list[1][period_num]['activity'].items())))
 
     for members_arr in members:
@@ -174,12 +177,9 @@ else:
 
             if 'activity' in group_list[1][period_num].keys():
                 groups_stats.append(
-                    [group_list[0], to_date(group_list[1][period_num]["period_from"])] + to_arr_of_active(list(
+                    [group_list[0], datetime.datetime.fromtimestamp(time.time())] + to_arr_of_active(list(
                         group_list[1][period_num]['activity'].items())))
-            else:
 
-                groups_stats.append(
-                    [group_list[0], to_date(group_list[1][period_num]["period_from"]), 0, 0, 0, 0, 0])
     for members_arr in members:
 
         for stats in groups_stats:
@@ -190,7 +190,8 @@ else:
                           "count of subscribers"]
     cur.execute("SELECT * FROM stats_table")
     last_date = cur.fetchall()[-1][1]
-    if groups_stats[-1][1] == last_date:
+
+    if ((groups_stats != []) and (groups_stats[-1][1] == last_date)):
         print("update")
         with con as con:
             cur = con.cursor()
@@ -210,12 +211,20 @@ else:
 
 groups_posts = []
 posts_photos = []
+
 for group_id in groups:
-    bufer = get_response(base_url, version, token, "wall.get",
-                         "owner_id=-{}&count=20&extended=1&fields= id, name".format(group_id))['response']['items']
-    for item in bufer:
-        item.update({"group_id": '-' + str(group_id)})
-    groups_posts += bufer
+    last_post = -1
+    bufer = [1, 2]
+    counter = 0
+    while len(bufer) != 1 and len(bufer) != 0:
+
+        bufer = get_response(base_url, version, token, "wall.get",
+                             "owner_id=-{}&count=100&offset={}&extended=1&fields= id, name".format(group_id, counter))[
+            'response']['items']
+        for item in bufer:
+            item.update({"group_id": '-' + str(group_id)})
+        groups_posts += bufer
+        counter += 100
 
 # приводим данные о постах в удобоваримыый вид
 list_of_properties = ["group_id", 'date', 'post_type', 'text']
@@ -249,6 +258,39 @@ for post in groups_posts:
     new_posts_list.append(post_dict)
 print("loading in plsq...")
 photos_column = ["goup_id", "post_id", "photo"]
+
+try:
+    cur.execute("SELECT * FROM posts_photos")
+    f = cur.fetchall()
+except Exception:
+    f = -1
+
+if f != -1:
+    a = [list(i) for i in f if list(i) not in posts_photos]
+
+    if a:
+        posts_photos = posts_photos + a
+
+# сгружаем таблицу с информацией о постах в psql
+try:
+    cur = con.cursor()
+    cur.execute("SELECT * FROM posts_table")
+
+    f = cur.fetchall()
+
+except Exception:
+    f = -1
+
+if f != -1:
+
+    a = [{'group_id': i[0], 'date of publication ': i[1], 'post_type': i[2], 'text': i[3], 'post id': i[4],
+          'post link': i[5], 'comments': i[6], 'reposts': i[7], 'likes': i[8]} for i in f if
+         {'group_id': i[0], 'date of publication ': i[1], 'post_type': i[2], 'text': i[3], 'post id': i[4],
+          'post link': i[5], 'comments': i[6], 'reposts': i[7], 'likes': i[8]} not in new_posts_list]
+    if a:
+        new_posts_list = new_posts_list + a
+con.close()
+
 pd.DataFrame(posts_photos,
              columns=photos_column).to_sql(
     'posts_photos', con=engine, if_exists='replace', index=False)
@@ -256,7 +298,6 @@ pd.DataFrame(groups_info_list,
              columns=["group_id", "group_name", "is_closed", "group_type", "is_advertiser", "group_photo",
                       "group_link"]).to_sql(
     'groups_info_table', con=engine, if_exists='replace', index=False)
-# сгружаем таблицу с информацией о постах в psql
 pd.DataFrame(new_posts_list).to_sql('posts_table', con=engine, if_exists='replace', index=False)
 
 print("done!")
@@ -264,23 +305,37 @@ print("done!")
 # здесь получаем и обрабатываем  статистику по постам
 
 posts_stats = []
-for post in new_posts_list:
-    try:
-        post_stat = get_response(base_url, version, token, "stats.getPostReach",
-                                 "owner_id={}&post_ids={}".format(post['group_id'], post['post id']))['response']
+for groups_id in groups:
+    list_of_post = [str(i["post id"]) for i in new_posts_list if
+                    i['group_id'] == "-" + str(groups_id)]
+    count_of_parts = int(len(list_of_post) / 30) + 1
+    parted_list = numpy.array_split(numpy.array(list_of_post), count_of_parts)
 
-        posts_stats.append([post_stat[0]['post_id'], post_stat[0]['reach_subscribers'],
-                            post_stat[0]['reach_total'], post_stat[0]['reach_viral'], post_stat[0]['reach_ads'],
-                            post_stat[0]['to_group'], post_stat[0]['unsubscribe'], to_date(time.time())])
+    for part_number in range(count_of_parts):
 
-    except Exception:
+        try:
 
-        continue
+            post_stat = get_response(base_url, version, token, "stats.getPostReach",
+                                     "owner_id={}&post_ids={}".format("-" + str(groups_id),
+                                                                      ",".join(parted_list[part_number])))['response']
+
+            for ps in post_stat:
+
+                posts_stats.append([ps.get('post_id', 0), ps.get('reach_subscribers', 0),
+                                    ps.get('reach_total', 0), ps.get('reach_viral', 0), ps.get('reach_ads', 0),
+                                    ps.get('to_group', 0), ps.get('unsubscribe', 0),
+                                    datetime.datetime.fromtimestamp(time.time())])
+
+
+
+
+        except Exception:
+
+            continue
 
 post_columns_names = ["post_id", "reach_subscribers", "reach_total", "viral_reach", "reach_ads",
                       "mowing to group", "unsubscribe ", "stats_date"]
 
-print(posts_stats)
 try:
     cur.execute("SELECT * FROM groups_posts_stats")
     last_date = cur.fetchall()[-1][-1]
@@ -289,6 +344,7 @@ except Exception:
 if posts_stats != []:
     if last_date is None:
         print('creating...')
+        print(len(posts_stats))
         pd.DataFrame(posts_stats,
                      columns=post_columns_names).to_sql(
             'groups_posts_stats', con=engine, if_exists='append', index=False)
@@ -310,5 +366,9 @@ if posts_stats != []:
             'groups_posts_stats', con=engine, if_exists='append', index=False)
 
         print("update!")
+elif last_date == None:
+    pd.DataFrame(posts_stats,
+                 columns=post_columns_names).to_sql(
+        'groups_posts_stats', con=engine, if_exists='append', index=False)
 
 print("slipping now...")
