@@ -26,7 +26,7 @@ def reader(name):
 engine = create_engine("postgresql+psycopg2://postgres:{}@localhost/vk_db".format(reader("postpas.txt")))
 con = psycopg2.connect(database="vk_db", user='postgres', password=reader("postpas.txt"), host="localhost",
                        port=5432)
-token = reader("t.txt")
+token = reader("t2.txt")
 
 base_url = "https://api.vk.com/method/{}?{}&access_token={}&v={}"
 version = "5.130"
@@ -94,7 +94,7 @@ id = info['id']
 
 # получаем список групп
 groups = get_response(base_url, version, token, "groups.get", "user_id={}&filter=admin".format(id))['response']["items"]
-# получае список c id и количеством подписчиков группы
+# получае список c id и количеством подписчиков грgroups.getуппы
 members = []
 for g_id in groups:
     count_of_members = \
@@ -235,7 +235,7 @@ for post in groups_posts:
         if properties != 'date':
             post_dict[properties] = post[properties]
         else:
-            post_dict['date of publication '] = to_date(post[properties])
+            post_dict['date of publication '] = datetime.date.fromtimestamp(post[properties])
     post_dict["post id"] = post['id']
     post_dict['post link'] = "https://vk.com/wall{}_{}".format(post_dict["group_id"], post_dict['post id'])
     post_dict['comments'] = post['comments']['count']
@@ -305,11 +305,15 @@ print("done!")
 # здесь получаем и обрабатываем  статистику по постам
 
 posts_stats = []
+
 for groups_id in groups:
     list_of_post = [str(i["post id"]) for i in new_posts_list if
                     i['group_id'] == "-" + str(groups_id)]
+    list_of_metrics = [[str(i["comments"]), str(i["reposts"]), str(i["likes"])] for i in new_posts_list if
+                       i['group_id'] == "-" + str(groups_id)]
     count_of_parts = int(len(list_of_post) / 30) + 1
     parted_list = numpy.array_split(numpy.array(list_of_post), count_of_parts)
+    parted_metrics_list = numpy.array_split(numpy.array(list_of_metrics), count_of_parts)
 
     for part_number in range(count_of_parts):
 
@@ -319,12 +323,15 @@ for groups_id in groups:
                                      "owner_id={}&post_ids={}".format("-" + str(groups_id),
                                                                       ",".join(parted_list[part_number])))['response']
 
-            for ps in post_stat:
-
-                posts_stats.append([ps.get('post_id', 0), ps.get('reach_subscribers', 0),
-                                    ps.get('reach_total', 0), ps.get('reach_viral', 0), ps.get('reach_ads', 0),
-                                    ps.get('to_group', 0), ps.get('unsubscribe', 0),
-                                    datetime.datetime.fromtimestamp(time.time())])
+            for number in range(len(post_stat)):
+                posts_stats.append([post_stat[number].get('post_id', 0), post_stat[number].get('reach_subscribers', 0),
+                                    post_stat[number].get('reach_total', 0), post_stat[number].get('reach_viral', 0),
+                                    post_stat[number].get('reach_ads', 0),
+                                    post_stat[number].get('to_group', 0), post_stat[number].get('unsubscribe', 0),
+                                    int(parted_metrics_list[part_number][number][0]),
+                                    int(parted_metrics_list[part_number][number][1]),
+                                    int(parted_metrics_list[part_number][number][2]),
+                                    datetime.date.fromtimestamp(time.time())])
 
 
 
@@ -334,23 +341,27 @@ for groups_id in groups:
             continue
 
 post_columns_names = ["post_id", "reach_subscribers", "reach_total", "viral_reach", "reach_ads",
-                      "mowing to group", "unsubscribe ", "stats_date"]
+                      "mowing to group", "unsubscribe ", "comments", "reposts", "likes", "stats_date"]
 
 try:
+    con = psycopg2.connect(database="vk_db", user='postgres', password=reader("postpas.txt"), host="localhost",
+                         port=5432)
+    cur = con.cursor()
     cur.execute("SELECT * FROM groups_posts_stats")
     last_date = cur.fetchall()[-1][-1]
+    print(last_date)
 except Exception:
     last_date = None
 if posts_stats != []:
     if last_date is None:
         print('creating...')
-        print(len(posts_stats))
+
         pd.DataFrame(posts_stats,
                      columns=post_columns_names).to_sql(
             'groups_posts_stats', con=engine, if_exists='append', index=False)
 
 
-    elif posts_stats[-1][-1] != last_date:
+    elif str(posts_stats[-1][-1]) != str(last_date):
         print("adding...")
         pd.DataFrame(posts_stats,
                      columns=post_columns_names).to_sql(

@@ -89,11 +89,11 @@ for g in groups:
         for st in s[0]['stories']:
             if "photo" in st:
                 stories_list.append(
-                    {"stories_id": st['id'], "group_id": st['owner_id'], "date_of_publication": to_date(st["date"]),
+                    {"stories_id": st['id'], "group_id": st['owner_id'], "date_of_publication": datetime.date.fromtimestam(st["date"]),
                      "image/photo": st['photo']['sizes'][-1]['url']})
             else:
                 stories_list.append(
-                    {"stories_id": st['id'], "group_id": st['owner_id'], "date_of_publication": to_date(st["date"]),
+                    {"stories_id": st['id'], "group_id": st['owner_id'], "date_of_publication": datetime.date.fromtimestamp(st["date"]),
                      "image/photo": st["video"]['image'][-1]['url']})
 
 cur = con.cursor()
